@@ -179,8 +179,8 @@ export default function RegistrationForm() {
         // Guard against JS date overflow (e.g. Feb 30 silently becomes Mar 2)
         const [, mm, dd] = v.split("-").map(Number);
         if (month !== mm || day !== dd) return "Enter a valid calendar date.";
-        if (year < 1995 || year > 2015)
-          return "Date of birth must be between 1995 and 2015.";
+        if (year <= 1999 || year >= 2009)
+          return "Date of birth must be between 1999 and 2009.";
         return "";
       }
 
