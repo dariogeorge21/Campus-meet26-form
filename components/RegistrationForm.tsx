@@ -1,8 +1,10 @@
 "use client";
 
 import { useState } from "react";
-import { ArrowRight, Check, Loader2, AlertCircle, Download } from "lucide-react";
-import { generateTicketPdf, type TicketPayload } from "@/lib/generateTicketPdf";
+import { ArrowRight, Check, Loader2, AlertCircle, Download, FileDown, Image as ImageIcon } from "lucide-react";
+import { generateTicketPdf, generateTicketImage, type TicketPayload } from "@/lib/generateTicketPdf";
+import DigitalTicket from "@/components/DigitalTicket";
+import { generateTicketCode, parseSequenceNumber, formatRegistrationNumber } from "@/lib/ticket-utils";
 
 type FormData = {
   name: string;
@@ -532,38 +534,87 @@ export default function RegistrationForm() {
 
   // ── Success screen ───────────────────────────────────────────────────────────
   if (submitted) {
+    const seqNum = ticketData ? parseSequenceNumber(ticketData.ticket.ticketNumber) : 1;
+    const ticketCodeObj = ticketData
+      ? generateTicketCode(
+          {
+            id: ticketData.registrationId || ticketData.ticket.tokenHash,
+            name: ticketData.participant.name,
+            affiliation: ticketData.participant.affiliation,
+            college: ticketData.participant.college,
+            institute: ticketData.participant.institute,
+          },
+          seqNum,
+          ticketData.ticket.tokenHash
+        )
+      : null;
+
     return (
-      <div className="w-full max-w-4xl mx-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-12 text-center animate-fade-up">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full border border-[var(--gold-muted)] mb-6">
+      <div className="w-full max-w-5xl mx-auto rounded-2xl border border-[var(--border)] bg-[var(--bg-card)] p-6 sm:p-10 md:p-12 text-center animate-fade-up shadow-2xl">
+        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full border border-[var(--gold-muted)] mb-5 bg-[var(--gold)]/10">
           <Check className="text-[var(--gold)] w-8 h-8" />
         </div>
-        <p className="eyebrow mb-3">Registration Received</p>
-        <h3 className="heading-display text-4xl mb-4">See You There</h3>
-        <p className="text-[var(--text-muted)] text-sm max-w-md mx-auto">
-          Thank you for registering. Your ticket has been downloaded — check your downloads folder.
+        <p className="eyebrow mb-2">Registration Confirmed</p>
+        <h3 className="heading-display text-3xl sm:text-4xl md:text-5xl mb-3">See You at ORAH 2K26</h3>
+        <p className="text-[var(--text-muted)] text-sm sm:text-base max-w-lg mx-auto mb-8">
+          Thank you for registering. Your official entry ticket is ready below. Please save or download your pass for check-in.
         </p>
 
-        {/* Ticket download confirmation + re-download */}
-        {ticketData && (
-          <div className="mt-6 inline-flex items-center gap-3 px-5 py-3 rounded-lg border border-[var(--gold-muted)] bg-[var(--gold-muted)]/10">
-            <Download className="w-4 h-4 text-[var(--gold)]" />
-            <span className="text-sm text-[var(--text)] font-medium">
-              {ticketData.ticket.ticketNumber}
-            </span>
-            <span className="text-[var(--border-subtle)]">·</span>
-            <button
-              onClick={() => generateTicketPdf(ticketData)}
-              className="text-xs text-[var(--gold-muted)] hover:text-[var(--gold)] transition-colors underline underline-offset-2"
-            >
-              Download Again
-            </button>
+        {/* Digital Ticket Render Container */}
+        {ticketData && ticketCodeObj && (
+          <div className="my-6 w-full flex flex-col items-center">
+            <div className="w-full max-w-[940px] overflow-x-auto pb-4 flex justify-center">
+              <div className="min-w-[680px] sm:min-w-[800px] md:min-w-[940px] transition-transform">
+                <DigitalTicket
+                  id="digital-ticket-canvas"
+                  registration={{
+                    id: ticketData.registrationId || ticketData.ticket.tokenHash,
+                    name: ticketData.participant.name,
+                    affiliation: ticketData.participant.affiliation,
+                    college: ticketData.participant.college,
+                    institute: ticketData.participant.institute,
+                    year_of_study: ticketData.participant.yearOfStudy,
+                    parish: ticketData.participant.parish,
+                    diocese: ticketData.participant.diocese,
+                  }}
+                  ticketCode={ticketCodeObj.code}
+                  sequenceNumber={seqNum}
+                  ticketId={ticketData.ticket.tokenHash}
+                  eventName="ORAH 2K26"
+                  venue="St Thomas College"
+                  date="SEP 19"
+                  time="5:00 PM"
+                />
+              </div>
+            </div>
+
+            {/* Action Buttons */}
+            <div className="mt-6 flex flex-wrap items-center justify-center gap-4">
+              <button
+                type="button"
+                onClick={() => generateTicketPdf(ticketData)}
+                className="btn-fill-gold inline-flex items-center gap-2.5 px-6 py-3 rounded-lg text-xs sm:text-sm font-bold tracking-wider uppercase transition-all shadow-md hover:scale-[1.02] cursor-pointer"
+              >
+                <FileDown className="w-4 h-4" />
+                <span>Download PDF Ticket</span>
+              </button>
+
+              <button
+                type="button"
+                onClick={() => generateTicketImage(ticketData)}
+                className="inline-flex items-center gap-2.5 px-6 py-3 rounded-lg border border-[var(--gold-muted)] bg-[var(--bg-secondary)] hover:bg-[var(--gold-muted)]/20 text-[var(--gold)] text-xs sm:text-sm font-bold tracking-wider uppercase transition-all shadow-md hover:scale-[1.02] cursor-pointer"
+              >
+                <ImageIcon className="w-4 h-4" />
+                <span>Download Image (PNG)</span>
+              </button>
+            </div>
           </div>
         )}
 
         {/* Support Contact */}
-        <div className="mt-8 flex flex-col items-center p-4 px-6 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg)] max-w-lg mx-auto">
-          <p className="text-xs text-[var(--text-muted)] text-center mb-2">
-            For any event related details or errors in submission, please contact:
+        <div className="mt-10 flex flex-col items-center p-4 px-6 rounded-lg border border-[var(--border-subtle)] bg-[var(--bg)] max-w-lg mx-auto">
+          <p className="text-xs text-[var(--text-muted)] text-center mb-1.5">
+            For any event related details or queries, please contact:
           </p>
           <div className="text-sm font-medium text-[var(--text)] text-center">
             Sebin Jo Saji <span className="mx-2 text-[var(--border-subtle)]">|</span> <a href="tel:+919400389831" className="text-[var(--gold-muted)] hover:text-[var(--gold)] transition-colors">+91 94003 89831</a>

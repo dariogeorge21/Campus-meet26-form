@@ -1,30 +1,17 @@
-/**
- * generateTicketPdf.ts
- * ─────────────────────────────────────────────────────────────
- * Generates a physical ticket-sized PDF (85 mm × 50 mm landscape)
- * and triggers a browser download.
- *
- * Redesigned layout — premium minimal, dark theme:
- *
- *  ┌──────────────────────────────────────────┬───┬──────────┐
- *  │ gold accent bar                           ┊   ┊          │
- *  │ ORAH 2026 · JY PALA MISSIONARIES          ┊   ┊  ⟦ QR ⟧  │
- *  │ Name (large)                              ┊   ┊  #TICKET │
- *  │ ─────────────────────                     ┊   ┊          │
- *  │ COLLEGE          PARISH                   ┊   ┊          │
- *  │ St. Xavier's     Sacred Heart             ┊   ┊          │
- *  │                                           ┊   ┊          │
- *  │ #ORAH-0042           Registered 12 Aug··· ┊   ┊          │
- *  └──────────────────────────────────────────┴───┴──────────┘
- *    main zone (stub-style card)         perforation   QR stub
- */
-
 "use client";
 
 import { jsPDF } from "jspdf";
-import QRCode from "qrcode";
+import { toPng } from "html-to-image";
+import {
+  generateTicketCode,
+  parseSequenceNumber,
+  formatRegistrationNumber,
+  generateQrCodeDataUrl,
+  buildTicketQrPayload,
+} from "./ticket-utils";
 
 export type TicketPayload = {
+  registrationId?: string;
   ticket: {
     tokenHash: string;
     ticketNumber: string;
@@ -49,270 +36,230 @@ export type TicketPayload = {
   };
 };
 
-type RGB = [number, number, number];
+/** Helper to load an image element */
+function loadImage(src: string): Promise<HTMLImageElement> {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    img.crossOrigin = "anonymous";
+    img.onload = () => resolve(img);
+    img.onerror = reject;
+    img.src = src;
+  });
+}
 
-/** Formats an ISO timestamp into a human-readable string (IST) */
-function formatTimestamp(iso: string): string {
+/**
+ * Downloads the ticket as a PDF document.
+ * If `#digital-ticket-canvas` is rendered on screen, it captures it directly.
+ * Otherwise, it constructs a temporary DOM element, captures it, and cleans up.
+ */
+export async function generateTicketPdf(payload: TicketPayload): Promise<boolean> {
+  const { ticket, participant } = payload;
+  const seqNum = parseSequenceNumber(ticket.ticketNumber);
+  const formattedSeq = formatRegistrationNumber(seqNum);
+  const ticketCodeObj = generateTicketCode(
+    {
+      id: payload.registrationId || ticket.tokenHash,
+      affiliation: participant.affiliation,
+      college: participant.college,
+      institute: participant.institute,
+    },
+    seqNum,
+    ticket.tokenHash
+  );
+
+  const safeName = participant.name
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[^A-Za-z0-9_]/g, "");
+  const fileName = `ORAH-2026_${safeName}_PASS-${formattedSeq}.pdf`;
+
+  // 1. Check if the element already exists in the DOM
+  const existingElement = document.getElementById("digital-ticket-canvas");
+  if (existingElement) {
+    return await captureAndSavePdf(existingElement, fileName);
+  }
+
+  // 2. If not yet mounted in DOM, dynamically create an offscreen ticket container
+  let tempWrapper: HTMLDivElement | null = null;
   try {
-    return new Date(iso).toLocaleString("en-IN", {
-      timeZone: "Asia/Kolkata",
-      day: "2-digit",
-      month: "short",
-      year: "numeric",
-      hour: "2-digit",
-      minute: "2-digit",
-      hour12: true,
+    const qrContent = buildTicketQrPayload({
+      ticketId: ticket.tokenHash,
+      ticketCode: ticketCodeObj.code,
+      registrationId: payload.registrationId,
+      name: participant.name,
+      college: participant.college,
     });
-  } catch {
-    return iso;
+    const qrDataUrl = await generateQrCodeDataUrl(qrContent, "/jyLogo.png");
+
+    tempWrapper = document.createElement("div");
+    tempWrapper.style.position = "fixed";
+    tempWrapper.style.left = "-9999px";
+    tempWrapper.style.top = "-9999px";
+    tempWrapper.style.width = "940px";
+    tempWrapper.style.height = "300px";
+    tempWrapper.style.zIndex = "-1000";
+
+    const affiliation = participant.affiliation?.trim() || "College";
+    let institutionText = "";
+    if (affiliation === "College" && participant.college) {
+      institutionText = participant.college;
+    } else if (affiliation === "Institutes" && participant.institute) {
+      institutionText = `${participant.institute} Institute`;
+    } else if (affiliation && affiliation !== "College" && affiliation !== "Institutes") {
+      institutionText = participant.parish ? `${affiliation} · ${participant.parish}` : affiliation;
+    } else if (participant.college) {
+      institutionText = participant.college;
+    } else if (participant.parish) {
+      institutionText = participant.parish;
+    }
+
+    const nameParts = participant.name.trim().split(/\s+/).filter(Boolean);
+    const displayName = nameParts.length >= 3 ? nameParts.slice(0, 2).join(" ") : participant.name;
+
+    tempWrapper.innerHTML = `
+      <div id="temp-digital-ticket" style="position: relative; width: 940px; height: 300px; overflow: hidden; border-top-right-radius: 24px; border-bottom-right-radius: 24px; background-color: #E3E0D8; color: #111827; font-family: system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; display: flex;">
+        <div style="position: relative; height: 300px; width: 300px; overflow: hidden; background-color: #12131C; flex-shrink: 0;">
+          <img src="/ticketBanner.jpeg" alt="ORAH 2K26" style="width: 100%; height: 100%; object-fit: cover;" />
+        </div>
+        <div style="flex: 1; display: flex; flex-direction: column; justify-content: space-between; padding: 22px 28px; position: relative; overflow: hidden;">
+          <div style="display: flex; justify-content: space-between; align-items: flex-start;">
+            <div>
+              <p style="margin: 0; font-size: 11px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.2em; color: #374151;">LET'S GATHER AT...</p>
+              <p style="margin: 0; font-size: 11px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #6b7280;">Youth Gathering</p>
+            </div>
+            <div style="text-align: right;">
+              <p style="margin: 0; font-size: 12px; font-weight: 900; color: #111827;">St Thomas College</p>
+              <p style="margin: 0; font-size: 10px; font-weight: 600; text-transform: uppercase; letter-spacing: 0.1em; color: #6b7280;">Pala, Kottayam</p>
+            </div>
+          </div>
+          <div style="margin: auto 0; padding: 4px 0;">
+            <h2 style="margin: 0; font-size: 32px; font-weight: 900; color: #111827; letter-spacing: -0.02em; line-height: 1.1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 360px;">${displayName}</h2>
+            ${institutionText ? `<p style="margin: 4px 0 0; font-size: 13px; font-weight: 600; color: #374151; line-height: 1.3; max-width: 380px;">${institutionText}</p>` : ""}
+          </div>
+          <div style="display: flex; align-items: center; gap: 10px;">
+            <div style="padding: 5px 14px; border-radius: 9999px; border: 2px solid #111827; font-weight: 800; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;">SEP 19</div>
+            <div style="padding: 5px 14px; border-radius: 9999px; border: 2px solid #111827; font-weight: 800; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;">5:00 PM</div>
+            <div style="padding: 5px 14px; border-radius: 9999px; border: 2px solid #111827; font-weight: 800; font-size: 11px; text-transform: uppercase; letter-spacing: 0.1em;">PASS #${formattedSeq}</div>
+          </div>
+        </div>
+        <div style="position: relative; width: 0; display: flex; flex-direction: column; justify-content: space-between; align-items: center; flex-shrink: 0;">
+          <div style="width: 24px; height: 24px; border-radius: 50%; background-color: #03090d; margin-top: -12px; z-index: 20;"></div>
+          <div style="width: 0; flex: 1; border-right: 2px dashed #9ca3af; margin: 4px 0; z-index: 10;"></div>
+          <div style="width: 24px; height: 24px; border-radius: 50%; background-color: #03090d; margin-bottom: -12px; z-index: 20;"></div>
+        </div>
+        <div style="width: 240px; display: flex; align-items: center; justify-content: space-between; padding: 14px 16px; background-color: #DCD9D0; flex-shrink: 0;">
+          <div style="display: flex; align-items: center; gap: 8px; height: 100%; flex-shrink: 0;">
+            <svg style="height: 100%; width: 20px; color: #111827;" viewBox="0 0 26 160" preserveAspectRatio="none">
+              <rect x="0" y="0" width="2.5" height="160" fill="currentColor" />
+              <rect x="4" y="0" width="1.2" height="160" fill="currentColor" />
+              <rect x="6.5" y="0" width="3" height="160" fill="currentColor" />
+              <rect x="11" y="0" width="1.5" height="160" fill="currentColor" />
+              <rect x="14" y="0" width="1.2" height="160" fill="currentColor" />
+              <rect x="16.5" y="0" width="3.5" height="160" fill="currentColor" />
+              <rect x="21.5" y="0" width="1.8" height="160" fill="currentColor" />
+              <rect x="24.5" y="0" width="1.2" height="160" fill="currentColor" />
+            </svg>
+            <div style="display: flex; align-items: center; justify-content: center; writing-mode: vertical-lr; transform: rotate(180deg);">
+              <span style="font-size: 8.5px; font-family: monospace; font-weight: 700; text-transform: uppercase; letter-spacing: 0.2em; color: #4b5563; white-space: nowrap;">
+                ${ticketCodeObj.code}
+              </span>
+            </div>
+          </div>
+          <div style="flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: space-between; height: 100%; padding-left: 8px;">
+            <p style="margin: 0; font-size: 10px; font-weight: 900; text-transform: uppercase; letter-spacing: 0.16em; color: #1f2937;">ENTRY PASS</p>
+            <div style="width: 135px; height: 135px; background: #ffffff; padding: 6px; border-radius: 16px; border: 1px solid #d1d5db; display: flex; align-items: center; justify-content: center;">
+              <img src="${qrDataUrl}" alt="QR" style="width: 100%; height: 100%; object-fit: contain;" />
+            </div>
+            <span style="padding: 2px 10px; border-radius: 9999px; font-size: 8px; font-weight: 700; text-transform: uppercase; letter-spacing: 0.1em; color: #374151; background: rgba(229, 231, 235, 0.9); border: 1px solid #cbd5e1;">
+              SCAN AT EVENT
+            </span>
+          </div>
+        </div>
+      </div>
+    `;
+
+    document.body.appendChild(tempWrapper);
+
+    const targetEl = document.getElementById("temp-digital-ticket") || tempWrapper;
+    return await captureAndSavePdf(targetEl, fileName);
+  } catch (err) {
+    console.error("[generateTicketPdf] Error:", err);
+    return false;
+  } finally {
+    if (tempWrapper && tempWrapper.parentNode) {
+      tempWrapper.parentNode.removeChild(tempWrapper);
+    }
   }
 }
 
 /**
- * Draws text with manual letter-spacing (jsPDF has no reliable
- * cross-version `charSpace` support), used for the small-caps
- * eyebrow / label text that needs an editorial, premium feel.
+ * Downloads the ticket as a high-resolution PNG image.
  */
-function drawTracked(
-  doc: jsPDF,
-  text: string,
-  x: number,
-  y: number,
-  trackingMm: number
-): void {
-  let cursor = x;
-  for (const char of text) {
-    doc.text(char, cursor, y);
-    cursor += doc.getTextWidth(char) + trackingMm;
-  }
-}
+export async function generateTicketImage(payload: TicketPayload): Promise<boolean> {
+  const seqNum = parseSequenceNumber(payload.ticket.ticketNumber);
+  const formattedSeq = formatRegistrationNumber(seqNum);
+  const safeName = payload.participant.name
+    .trim()
+    .replace(/\s+/g, "_")
+    .replace(/[^A-Za-z0-9_]/g, "");
+  const fileName = `ORAH-2026_${safeName}_PASS-${formattedSeq}.png`;
 
-/** Truncates a string to fit a max width, appending "…" if cut */
-function fitText(doc: jsPDF, text: string, maxWidth: number): string {
-  if (doc.getTextWidth(text) <= maxWidth) return text;
-  let out = text;
-  while (out.length > 1 && doc.getTextWidth(out + "…") > maxWidth) {
-    out = out.slice(0, -1);
+  const existingElement = document.getElementById("digital-ticket-canvas");
+  if (!existingElement) {
+    console.error("[generateTicketImage] Element #digital-ticket-canvas not found.");
+    return false;
   }
-  return out + "…";
-}
 
-/** Loads a public asset URL and returns it as a base64 PNG data URL */
-async function loadImageAsDataUrl(url: string): Promise<string | null> {
   try {
-    const res = await fetch(url);
-    if (!res.ok) return null;
-    const blob = await res.blob();
-    return await new Promise<string>((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(blob);
+    const dataUrl = await toPng(existingElement, {
+      pixelRatio: 3,
+      cacheBust: true,
+      backgroundColor: "#e3e0d8",
     });
-  } catch {
-    return null;
+
+    const a = document.createElement("a");
+    a.download = fileName;
+    a.href = dataUrl;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    return true;
+  } catch (err) {
+    console.error("[generateTicketImage] Failed to generate PNG ticket:", err);
+    return false;
   }
 }
 
-export async function generateTicketPdf(payload: TicketPayload): Promise<void> {
-  const { ticket, participant, event } = payload;
+/**
+ * Helper to capture a DOM node and save it as a landscape PDF ticket.
+ */
+async function captureAndSavePdf(element: HTMLElement, fileName: string): Promise<boolean> {
+  try {
+    const dataUrl = await toPng(element, {
+      pixelRatio: 3,
+      cacheBust: true,
+      backgroundColor: "#e3e0d8",
+    });
 
-  // ── 1. Pre-load assets (QR + JY logo) in parallel ──────────
-  const [qrDataUrl, logoDataUrl] = await Promise.all([
-    QRCode.toDataURL(ticket.tokenHash, {
-      width: 240,
-      margin: 0,
-      color: { dark: "#141008", light: "#ffffff" },
-      errorCorrectionLevel: "M",
-    }),
-    loadImageAsDataUrl("/jyLogo.png"),
-  ]);
+    const img = await loadImage(dataUrl);
+    const imgW = img.naturalWidth;
+    const imgH = img.naturalHeight;
 
-  // ── 2. Create jsPDF document ───────────────────────────────
-  const W = 85; // mm
-  const H = 50; // mm
+    const isLandscape = imgW >= imgH;
+    const pdfW = isLandscape ? 210 : 100;
+    const pdfH = Math.round((imgH * pdfW) / imgW);
 
-  const doc = new jsPDF({
-    orientation: "landscape",
-    unit: "mm",
-    format: [H, W],
-  });
+    const pdf = new jsPDF({
+      orientation: isLandscape ? "landscape" : "portrait",
+      unit: "mm",
+      format: [pdfW, pdfH],
+    });
 
-  // ── 3. Palette — warm near-black + soft gold, off-white ink ─
-  const BG: RGB = [16, 12, 7]; // main zone background
-  const STUB_BG: RGB = [24, 18, 10]; // QR stub background, one shade up
-  const GOLD: RGB = [201, 158, 92];
-  const GOLD_MUTED: RGB = [124, 104, 72];
-  const INK: RGB = [242, 236, 224]; // off-white, not pure white
-  const INK_MUTED: RGB = [150, 140, 122];
-
-  // ── 4. Layout constants ─────────────────────────────────────
-  const STUB_W = 22; // width of the QR stub, right-aligned
-  const DIV_X = W - STUB_W; // 63mm — perforation line
-  const MARGIN = 4;
-  const contentRight = DIV_X - 3; // right edge of usable text area
-  const contentW = contentRight - MARGIN;
-
-  // ── 5. Backgrounds ───────────────────────────────────────────
-  doc.setFillColor(...BG);
-  doc.rect(0, 0, DIV_X, H, "F");
-  doc.setFillColor(...STUB_BG);
-  doc.rect(DIV_X, 0, STUB_W, H, "F");
-
-  // Thin gold accent bar along the very top — a quiet brand mark
-  doc.setFillColor(...GOLD);
-  doc.rect(0, 0, W, 0.8, "F");
-
-  // ── 6. Perforation between main card and QR stub ────────────
-  doc.setDrawColor(...GOLD_MUTED);
-  doc.setLineWidth(0.15);
-  doc.setLineDashPattern([0.8, 0.8], 0);
-  doc.line(DIV_X, 3, DIV_X, H - 3);
-  doc.setLineDashPattern([], 0);
-
-  // Punch-hole notches at top/bottom edge of the perforation
-  doc.setFillColor(255, 255, 255);
-  doc.circle(DIV_X, 0, 1.6, "F");
-  doc.circle(DIV_X, H, 1.6, "F");
-
-  // ── 7. Eyebrow — event name, tracked small caps ──────────────
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(5.2);
-  doc.setTextColor(...GOLD);
-  drawTracked(doc, event.name.toUpperCase(), MARGIN, 8, 0.35);
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(4.3);
-  doc.setTextColor(...INK_MUTED);
-  drawTracked(
-    doc,
-    ("Jesus Youth Pala").toUpperCase(),
-    MARGIN,
-    11.3,
-    0.15
-  );
-
-  // ── 8. Name — the focal point ─────────────────────────────────
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(12);
-  doc.setTextColor(...INK);
-  const nameY = 20.5;
-  doc.text(fitText(doc, participant.name, contentW), MARGIN, nameY);
-
-  // Thin gold rule beneath the name
-  doc.setDrawColor(...GOLD_MUTED);
-  doc.setLineWidth(0.15);
-  doc.line(MARGIN, nameY + 2.4, contentRight, nameY + 2.4);
-
-  // ── 9. Meta grid — College / Parish, label-over-value ─────────
-  const colGap = contentW / 2;
-  const fieldLabelY = nameY + 8;
-  const fieldValueY = fieldLabelY + 3.6;
-
-  const drawField = (label: string, value: string, x: number) => {
-    doc.setFont("helvetica", "normal");
-    doc.setFontSize(4.2);
-    doc.setTextColor(...GOLD_MUTED);
-    drawTracked(doc, label.toUpperCase(), x, fieldLabelY, 0.25);
-
-    doc.setFont("helvetica", "bold");
-    doc.setFontSize(6.2);
-    doc.setTextColor(...INK);
-    doc.text(fitText(doc, value, colGap - 3), x, fieldValueY);
-  };
-
-  const collegeAbbreviations: Record<string, string> = {
-    "St Joseph's College of Engineering and Technology, Choondacherry": "SJCET",
-    "St Joseph's Institute of Hotel Management and Catering Technology, Choondacherry": "SJIHMCT",
-    "Alphonsa College, Pala": "ACP",
-    "Devamatha College, Kuravilangad": "DCK",
-    "St Thomas College, Pala": "STC",
-    "St Joseph's College, Moolamattom": "SJCM",
-    "St George's College, Aruvithura": "SGC",
-    "St Stephen's College, Uzhavoor": "SSC",
-    "Bishop Vayalil Memorial Holy Cross College, Cherpunkal": "BVM",
-    "Mar Augusthinose College, Ramapuram": "MAC",
-    "+2 Passout": "+2 Passout"
-  };
-
-  let firstFieldLabel = "Affiliation";
-  let firstFieldValue = participant.affiliation || "-";
-
-  if (participant.college) {
-    firstFieldLabel = "College";
-    firstFieldValue = collegeAbbreviations[participant.college] || participant.college;
-  } else if (participant.institute) {
-    firstFieldLabel = "Institute";
-    firstFieldValue = participant.institute;
+    pdf.addImage(dataUrl, "PNG", 0, 0, pdfW, pdfH, undefined, "FAST");
+    pdf.save(fileName);
+    return true;
+  } catch (err) {
+    console.error("[generateTicketPdf] captureAndSavePdf failed:", err);
+    return false;
   }
-
-  drawField(firstFieldLabel, firstFieldValue, MARGIN);
-  drawField("Parish", participant.parish, MARGIN + colGap);
-
-  // ── 10. Footer — ticket number + registration timestamp ───────
-  const footerY = H - 4.5;
-  // doc.setDrawColor(...GOLD_MUTED);
-  // doc.setLineWidth(0.1);
-  // doc.line(MARGIN, footerY - 3, contentRight, footerY - 3);
-
-  // JY Logo — left of footer line, vertically centred in the footer strip
-  if (logoDataUrl) {
-    // Keep the logo at a tasteful small size: 5 mm wide, proportional height
-    const logoW = 7;
-    const logoH = 7; // approximate; jsPDF will not stretch, it clips
-    doc.addImage(logoDataUrl, "PNG", MARGIN, footerY - logoH + 1, logoW, logoH);
-  }
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(4);
-  doc.setTextColor(...INK_MUTED);
-  doc.text(formatTimestamp(ticket.issuedAt), contentRight, footerY, {
-    align: "right",
-  });
-
-  // ── 11. QR stub — centred card + label ─────────────────────────
-  const stubCenterX = DIV_X + STUB_W / 2;
-
-  doc.setFont("helvetica", "normal");
-  doc.setFontSize(4);
-  doc.setTextColor(...GOLD_MUTED);
-  // drawTracked has no built-in centering, so measure total width first
-  {
-    const label = "SCAN AT EVENT";
-    const tracking = 0.15;
-    let totalW = 0;
-    for (const c of label) totalW += doc.getTextWidth(c) + tracking;
-    totalW -= tracking;
-    drawTracked(doc, label, stubCenterX - totalW / 2, 7, tracking);
-  }
-
-  const cardSize = 17;
-  const cardX = stubCenterX - cardSize / 2;
-  const cardY = (H - cardSize) / 2 - 1;
-  const cardRadius = 1.6;
-
-  doc.setFillColor(255, 255, 255);
-  doc.roundedRect(cardX, cardY, cardSize, cardSize, cardRadius, cardRadius, "F");
-
-  const qrPad = 1.4;
-  doc.addImage(
-    qrDataUrl,
-    "PNG",
-    cardX + qrPad,
-    cardY + qrPad,
-    cardSize - qrPad * 2,
-    cardSize - qrPad * 2
-  );
-
-  doc.setFont("helvetica", "bold");
-  doc.setFontSize(4.6);
-  doc.setTextColor(...GOLD);
-  doc.text(ticket.ticketNumber, stubCenterX, cardY + cardSize + 4, {
-    align: "center",
-  });
-
-  // ── 12. Save / download ─────────────────────────────────────
-  const safeName = participant.name.trim().replace(/\s+/g, "_").replace(/[^A-Za-z0-9_]/g, "");
-  const filename = `ORAH-2026_${safeName}_${ticket.ticketNumber}.pdf`;
-  doc.save(filename);
 }
