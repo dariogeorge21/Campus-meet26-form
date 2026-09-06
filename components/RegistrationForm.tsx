@@ -4,6 +4,7 @@ import { useState } from "react";
 import { ArrowRight, Check, Loader2, AlertCircle, Download, FileDown, Image as ImageIcon } from "lucide-react";
 import { generateTicketPdf, generateTicketImage, type TicketPayload } from "@/lib/generateTicketPdf";
 import DigitalTicket from "@/components/DigitalTicket";
+import SubmittingModal from "@/components/SubmittingModal";
 import { generateTicketCode, parseSequenceNumber, formatRegistrationNumber } from "@/lib/ticket-utils";
 
 type FormData = {
@@ -491,44 +492,13 @@ export default function RegistrationForm() {
     }
   };
 
-  // ── Downloading state screen ─────────────────────────────────────────────────
-  if (isDownloading) {
+  // ── Submitting & Downloading 3D Modal Overlay ───────────────────────────────
+  if (isLoading || isDownloading) {
     return (
-      <div className="w-full max-w-4xl mx-auto rounded-lg border border-[var(--border)] bg-[var(--bg-card)] p-12 text-center animate-fade-up">
-        <div className="inline-flex items-center justify-center w-16 h-16 rounded-full border border-[var(--gold-muted)] mb-6">
-          <Loader2 className="text-[var(--gold)] w-8 h-8 animate-spin" />
-        </div>
-        <p className="eyebrow mb-3">Almost There</p>
-        <h3 className="heading-display text-3xl mb-4">Generating Your Ticket…</h3>
-        <p className="text-[var(--text-muted)] text-sm max-w-sm mx-auto">
-          Your ticket PDF is being prepared and will download automatically.
-        </p>
-      </div>
-    );
-  }
-
-  // ── Submitting overlay (animated) ───────────────────────────────────────
-  if (isLoading) {
-    return (
-      <div className="fixed inset-0 z-50 flex items-center justify-center p-6 pointer-events-auto">
-        <div className="absolute inset-0 bg-black/40 backdrop-blur-sm" aria-hidden="true" />
-        <div role="status" aria-live="polite" className="relative z-10 w-full max-w-md p-8 bg-[var(--bg-card)]/95 border border-[var(--border)] rounded-2xl shadow-2xl text-center animate-fade-up">
-          <div className="mx-auto w-20 h-20 rounded-full flex items-center justify-center mb-4 bg-gradient-to-br from-[var(--gold-muted)] to-[var(--gold)] p-1">
-            <div className="rounded-full bg-[var(--bg-card)] p-3">
-              <Loader2 className="w-6 h-6 text-[var(--gold)] animate-spin" />
-            </div>
-          </div>
-          <p className="eyebrow mb-2">Submitting</p>
-          <h3 className="text-2xl font-semibold mb-2">Sending your registration</h3>
-          <p className="text-sm text-[var(--text-muted)] max-w-xs mx-auto">Please wait a moment while we save your details and prepare your ticket.</p>
-
-          <div className="mt-5 flex items-center justify-center gap-2">
-            <span className="w-2.5 h-2.5 rounded-full bg-[var(--gold)] animate-pulse [animation-delay:-0.2s]" />
-            <span className="w-2.5 h-2.5 rounded-full bg-[var(--gold)] animate-pulse [animation-delay:-0.1s]" />
-            <span className="w-2.5 h-2.5 rounded-full bg-[var(--gold-muted)] animate-pulse" />
-          </div>
-        </div>
-      </div>
+      <SubmittingModal
+        isOpen={true}
+        stage={isDownloading ? "generating" : "submitting"}
+      />
     );
   }
 
